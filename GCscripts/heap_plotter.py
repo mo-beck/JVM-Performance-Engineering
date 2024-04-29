@@ -13,30 +13,44 @@ from parse_g1_regions import plot_rates, parse_g1_log
 
 # Define colors and markers for both G1 and Parallel GCs
 colors = {
+    'Prepare Mixed G1 Evacuation Pause': 'grey',
+    'Mixed G1 Evacuation Pause': 'blue',
+    'Mixed GCLocker Initiated GC': 'purple',
     'Young Metadata GC Threshold': 'black',
-    'Young SystemGC': 'blue',
-    'Young AllocationFailure': 'grey',
-    'Young GCLocker Initiated GC': 'purple',
+    'Young SystemGC': 'red',
+    'Young Allocation Failure': 'brown',
+    'Young GCLocker Initiated GC': 'cyan',
+    'Young G1 Preventive Collection': 'indigo',
+    'Young G1 Evacuation Pause': 'teal',   
+    'Full G1 Compaction Pause': 'light green',
     'Full SystemGC': 'green',
     'Full Metadata GC Threshold': 'pink',
-    'Young Normal': 'grey',
-    'Young Concurrent Start': 'green',
-    'Remark': 'brown',
+    'Concurrent Start G1 Humongous Allocation': 'plum',
+    'Concurrent Start GCLocker Initiated GC': 'light blue',
+    'Concurrent Start G1 Evacuation Pause': 'magenta',
+    'Remark': 'violet',
     'Cleanup': 'red',
     'TotalHeap': 'orange'
 }
 
 markers = {
-    'Young Metadata GC Threshold': 'circle-dot',
-    'Young SystemGC': 'star-open',
-    'Young AllocationFailure': 'cross',
-    'Young GCLocker Initiated GC': 'arrow-up-open',
+    'Prepare Mixed G1 Evacuation Pause': 'circle-dot',
+    'Mixed G1 Evacuation Pause': 'star-open',
+    'Mixed GCLocker Initiated GC': 'cross',
+    'Young Metadata GC Threshold': 'arrow-up-open',
+    'Young SystemGC': 'diamond',
+    'Young Allocation Failure': 'hash-open',
+    'Young GCLocker Initiated GC': 'arrow-down-open',
+    'Young G1 Preventive Collection': 'triangle-up',
+    'Young G1 Evacuation Pause': 'hash-open',   
+    'Full G1 Compaction Pause': 'circle-dot',
     'Full SystemGC': 'star-open',
-    'Full Metadata GC Threshold': 'diamond',
-    'Young Normal': 'cross',
-    'Young Concurrent Start': 'diamond',
+    'Full Metadata GC Threshold': 'arrow-up-open',
+    'Concurrent Start G1 Humongous Allocation': 'diamond',
+    'Concurrent Start GCLocker Initiated GC': 'hash-open',
+    'Concurrent Start G1 Evacuation Pause': 'triangle-up',
     'Remark': 'star-open',
-    'Cleanup': 'arrow-up-open',
+    'Cleanup': 'square-open',
     'TotalHeap': 'hash-open'
 }
 
@@ -153,10 +167,9 @@ def update_output(selected_value, contents, filename):
 
 def parse_gc_log(log_content):
     # Define regex patterns for matching various log details
-    pause_pattern = r"\[(\d+\.\d+)s\].*?Pause (\w+).*?(\d+)M->(\d+)M\((\d+)M\) (\d+\.\d+)ms"
+    pause_pattern = r"\[(\d+\.\d+)s\].*?Pause (\w+)(?: \((.*?)\))? ?(?:\((.*?)\))? (\d+)M->(\d+)M\((\d+)M\) (\d+\.\d+)ms"
     scaling_pattern = r"\[(\d+\.\d+)s\].*?GC\(\d+\) User=(\d+\.\d+)s Sys=(\d+\.\d+)s Real=(\d+\.\d+)s"
     jdk_version_pattern = re.compile(r"\[\d+\.\d+s\]\[info\]\[gc,init\] Version: (\d+\.\d+\.\d+\+\d+-LTS(?:-\d+)?) \(release\)")
-    cause_pattern = r"Pause \w+ \((.*?)\)"
     g1_patterns = [
         re.compile(r'\[.*\]\[.*G1.*\]'),  # Identifies G1 collector usage
         re.compile(r'garbage-first heap')  # Identifies 'garbage-first heap' phrase
@@ -191,9 +204,21 @@ def parse_gc_log(log_content):
         # Match and process GC pause information
         pause_match = re.search(pause_pattern, line)
         if pause_match:
-            runtime, pause_type, heap_before, heap_after, total_heap, duration = pause_match.groups()
-            pause_cause = re.search(cause_pattern, line).group(1).strip() if re.search(cause_pattern, line) else ""
-            pause_name = determine_pause_name(pause_type, pause_cause)
+            # runtime, pause_type, heap_before, heap_after, total_heap, duration = pause_match.groups()
+            runtime, pause_type, description, pause_cause, heap_before, heap_after, total_heap, duration = pause_match.groups()
+            if description: 
+                if "Mixed" in description or "Concurrent Start" in description:
+                    pause_type = description  
+                if "System.gc()" in description:
+                    pause_cause = "SystemGC"
+
+            if pause_cause: 
+                pause_name = f"{pause_type} {pause_cause}"
+            elif description: 
+                pause_name = f"{pause_type} {description}"
+            else: 
+                pause_name = pause_type
+                                   
             gc_data.append({
                 "Runtime": float(runtime),
                 "HeapBefore": int(heap_before),
@@ -214,23 +239,6 @@ def parse_gc_log(log_content):
     scaling_data_df = pd.DataFrame(scaling_data)
     
     return data_df, scaling_data_df, is_g1, jdk_version
-
-def determine_pause_name(pause_type, pause_cause):
-    # Determine the pause name based on pause type and cause
-    if pause_type == "Young":
-        if pause_cause == "Allocation Failure":
-            return "Young AllocationFailure"
-        elif pause_cause == "System.gc":
-            return "Young SystemGC"
-        else:
-            return "Young " + pause_cause
-    elif pause_type == "Full":
-        if pause_cause == "System.gc":
-            return "Full SystemGC"
-        else:
-            return "Full " + pause_cause
-    else:
-        return pause_type
 
 def generate_plot(data_df, scaling_data_df, selected_value):
     fig = go.Figure()
