@@ -31,60 +31,36 @@ def parse_g1_log(log_content):
             if region_type in region_data:
                 region_data[region_type].append((runtime, before, after))
 
-    # Calculate rates for each region type
-    rates = {key: [] for key in region_data}
-    for region_type in region_data:
-        if region_type == 'Eden':
-            # For Eden, use the 'before' value of the current GC event
-            # and the 'after' value of the previous GC event
-            for i in range(1, len(region_data[region_type])):
-                prev_runtime, prev_before, prev_after = region_data[region_type][i-1]
-                runtime, before, after = region_data[region_type][i]
-
-                # Calculate the change in memory in MB
-                memory_change = (before - prev_after) * region_size
-
-                # Ensure we're not dividing by zero
-                time_difference = runtime - prev_runtime
-                if time_difference > 0:
-                    rate = memory_change / time_difference  # MB/s
-                    rates[region_type].append((runtime, rate))
-        else:
-            # For other regions, use the 'after' values
-            for i in range(1, len(region_data[region_type])):
-                prev_runtime, prev_before, prev_after = region_data[region_type][i-1]
-                runtime, before, after = region_data[region_type][i]
-
-                # Calculate the change in memory in MB
-                memory_change = (after - prev_after) * region_size
-
-                # Ensure we're not dividing by zero
-                time_difference = runtime - prev_runtime
-                if time_difference > 0:
-                    rate = memory_change / time_difference  # MB/s
-                    rates[region_type].append((runtime, rate))
-    return rates
+    return region_data
 
 # Plotting function
-def plot_rates(rates):
+def plot_regions(region_data):
     fig = go.Figure()
 
-    for region_type, data_points in rates.items():
-        runtime, rate = zip(*data_points)
+    for region_type, data_points in region_data.items():
+        runtime, before, after = zip(*data_points)
+
         fig.add_trace(go.Scatter(
             x=runtime,
-            y=rate,
+            y=before,
             mode='lines+markers',
-            name=region_type,
-            line=dict(shape='linear'),
-            connectgaps=True,  # this will connect gaps in the data
+            name=f'{region_type} Before GC',
+            line=dict(shape='hv'),
+            #connectgaps=True,  # this will connect gaps in the data
+        ))
+        fig.add_trace(go.Scatter(
+            x=runtime,
+            y=after,
+            mode='lines+markers',
+            name=f'{region_type} After GC',
+            line=dict(shape='hv'),  # hv makes horizontal-vertical steps
         ))
 
     fig.update_layout(
-        title='GC Region Rates Over Time',
+        title='GC Region States Over Time',
         xaxis_title='Runtime (s)',
-        yaxis_title='Rate (MB/s)',
-        legend_title='Region Types',
+        yaxis_title='Total Count of Regions',
+        legend_title='Region States',
         legend=dict(
             itemsizing='constant',
             traceorder='normal',

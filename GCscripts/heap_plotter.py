@@ -9,7 +9,7 @@ from dash import dcc, html
 from dash.dependencies import Input, Output
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from parse_g1_regions import plot_rates, parse_g1_log
+from parse_g1_regions import plot_regions, parse_g1_log
 
 # Define colors and markers for both G1 and Parallel GCs
 colors = {
@@ -146,12 +146,12 @@ def update_output(selected_value, contents, filename):
             {'label': 'Pause Summary', 'value': 'summary'}
         ]
         if is_g1:
-            dropdown_options.append({'label': 'G1 GC Region Rates', 'value': 'g1-rates'})
+            dropdown_options.append({'label': 'G1 GC Region', 'value': 'g1-regions'})
 
         # Generate the appropriate plot based on the selected value
-        if is_g1 and selected_value == 'g1-rates':
-            g1_rates = parse_g1_log(log_content) 
-            fig = plot_rates(g1_rates)
+        if is_g1 and selected_value == 'g1-regions':
+            g1_region_data = parse_g1_log(log_content) 
+            fig = plot_regions(g1_region_data)
         else:
             fig = generate_plot(data_df, scaling_data_df, selected_value)
 
