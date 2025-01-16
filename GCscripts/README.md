@@ -31,3 +31,6 @@ Each script has its own specific usage instructions and dependencies outlined in
 ### Notes
 - Make sure to have Python 3.x installed and set up correctly on your system.
 - Follow the individual setup instructions in each README to correctly install dependencies and run the scripts.
+
+### Acknowledgment
+These scripts were developed to provide a straightforward and efficient way to analyze Java GC logs using Python. ChatGPT was used during development as a tool to assist with updating boilerplate code and aligning with modern Python conventions where appropriate. The core logic, design and functionality reflect extensive hands-on experience with Java GC and performance engineering.
