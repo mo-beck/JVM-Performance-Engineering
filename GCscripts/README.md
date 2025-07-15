@@ -5,12 +5,12 @@ This directory contains various Python scripts for parsing and visualizing Java 
 
 ### Available Scripts
 
-1. **heap_plotter.py**:  
-   Focuses on visualizing heap occupancy and GC pause statistics for Java Parallel and G1 GCs.  
+1. **heap_plotter.py** (Enhanced v2.0):  
+   Enhanced script for visualizing Java GC logs with comprehensive G1 time-based heap sizing analysis. Supports traditional GC analysis plus advanced G1 sizing activity visualizations. Features modern log format support, interactive dashboards, and backward compatibility.  
    Refer to the detailed [readme_heap_plotter.md](./readme_heap_plotter.md) for more information.
 
-2. **parse_g1_regions.py**:  
-   Specializes in parsing and visualizing G1 GC region data to understand heap usage over time.  
+2. **parse_g1_regions.py** (Enhanced v2.0):  
+   Enhanced G1 log parser with comprehensive time-based heap sizing support. Handles both traditional `[time]s` and modern `[timestamp][pid][tid]` log formats. Includes automatic mode detection, sizing activity extraction, and JSON export capabilities.  
    Refer to the detailed [readme_parse_g1_regions.md](./readme_parse_g1_regions.md) for more information.
 
 3. **zgc_plotter.py**:  
@@ -20,6 +20,9 @@ This directory contains various Python scripts for parsing and visualizing Java 
 4. **genzgc_plotter.py**:  
    Offers visualizations for Generational ZGC logs, focusing on GC pauses, concurrent phases, page sizes, and causes across old and young generations.  
    Refer to the detailed [readme_genzgc_plotter.md](./readme_genzgc_plotter.md) for more information.
+
+### Enhanced G1 Tools Package
+For comprehensive G1 GC analysis with time-based heap sizing, refer to [README_G1_TOOLS.md](./README_G1_TOOLS.md) for a complete overview of the enhanced G1 analysis capabilities.
 
 ### How to Use
 Each script has its own specific usage instructions and dependencies outlined in their respective README files. Please consult each README to understand how to use the scripts effectively.
@@ -33,4 +36,4 @@ Each script has its own specific usage instructions and dependencies outlined in
 - Follow the individual setup instructions in each README to correctly install dependencies and run the scripts.
 
 ### Acknowledgment
-These scripts were developed to provide a straightforward and efficient way to analyze Java GC logs using Python. ChatGPT was used during development as a tool to assist with updating boilerplate code and aligning with modern Python conventions where appropriate. The core logic, design and functionality reflect extensive hands-on experience with Java GC and performance engineering.
+These scripts were developed to provide a straightforward and efficient way to analyze Java GC logs using Python. The enhanced G1 tools (v2.0) include comprehensive time-based heap sizing analysis while maintaining full backward compatibility. AI agents were used during development as tools to assist with updating boilerplate code and aligning with modern Python conventions where appropriate. The core logic, design and functionality reflect extensive hands-on experience with Java GC and performance engineering.
