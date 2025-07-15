@@ -1,0 +1,201 @@
+{
+  "summary": {
+    "total_region_entries": 7,
+    "total_sizing_entries": 8,
+    "region_size_mb": 32,
+    "has_pid_tid": true,
+    "has_sizing_data": true,
+    "region_types": {
+      "Eden": 2,
+      "Survivor": 2,
+      "Old": 2,
+      "Humongous": 1
+    },
+    "sizing_types": {
+      "heap_evaluation_start": 2,
+      "heap_evaluation_scan": 2,
+      "region_transition": 3,
+      "shrink_operation": 1
+    }
+  },
+  "region_entries": [
+    {
+      "timestamp": 36010.201,
+      "region_type": "Eden",
+      "before_count": 256,
+      "after_count": 0,
+      "pid": 12345,
+      "tid": 67890
+    },
+    {
+      "timestamp": 36010.202,
+      "region_type": "Survivor",
+      "before_count": 0,
+      "after_count": 16,
+      "pid": 12345,
+      "tid": 67890
+    },
+    {
+      "timestamp": 36010.203,
+      "region_type": "Old",
+      "before_count": 128,
+      "after_count": 132,
+      "pid": 12345,
+      "tid": 67890
+    },
+    {
+      "timestamp": 36020.401,
+      "region_type": "Eden",
+      "before_count": 200,
+      "after_count": 0,
+      "pid": 12345,
+      "tid": 67890
+    },
+    {
+      "timestamp": 36020.402,
+      "region_type": "Survivor",
+      "before_count": 16,
+      "after_count": 12,
+      "pid": 12345,
+      "tid": 67890
+    },
+    {
+      "timestamp": 36020.403,
+      "region_type": "Old",
+      "before_count": 132,
+      "after_count": 140,
+      "pid": 12345,
+      "tid": 67890
+    },
+    {
+      "timestamp": 36020.404,
+      "region_type": "Humongous",
+      "before_count": 4,
+      "after_count": 2,
+      "pid": 12345,
+      "tid": 67890
+    }
+  ],
+  "sizing_entries": [
+    {
+      "timestamp": "2025-06-19T10:00:05.123",
+      "pid": 12345,
+      "tid": 67890,
+      "level": "info",
+      "sizing_type": "heap_evaluation_start",
+      "message": "[2025-06-19T10:00:05.123][12345][67890][info][gc,sizing] Time-based heap evaluation started",
+      "inactive_regions": null,
+      "total_regions": null,
+      "region_id": null,
+      "from_state": null,
+      "to_state": null,
+      "idle_time_ms": null,
+      "shrink_bytes": null
+    },
+    {
+      "timestamp": "2025-06-19T10:00:05.124",
+      "pid": 12345,
+      "tid": 67890,
+      "level": "debug",
+      "sizing_type": "heap_evaluation_scan",
+      "message": "[2025-06-19T10:00:05.124][12345][67890][debug][gc,sizing] Scan found 45 inactive regions out of 2048 total regions",
+      "inactive_regions": 45,
+      "total_regions": 2048,
+      "region_id": null,
+      "from_state": null,
+      "to_state": null,
+      "idle_time_ms": null,
+      "shrink_bytes": null
+    },
+    {
+      "timestamp": "2025-06-19T10:00:05.125",
+      "pid": 12345,
+      "tid": 67890,
+      "level": "trace",
+      "sizing_type": "region_transition",
+      "message": "[2025-06-19T10:00:05.125][12345][67890][trace][gc,sizing] Region 1001: Eden -> Free, idle time: 2500.5ms",
+      "inactive_regions": null,
+      "total_regions": null,
+      "region_id": 1001,
+      "from_state": "Eden",
+      "to_state": "Free",
+      "idle_time_ms": 2500.5,
+      "shrink_bytes": null
+    },
+    {
+      "timestamp": "2025-06-19T10:00:05.126",
+      "pid": 12345,
+      "tid": 67890,
+      "level": "trace",
+      "sizing_type": "region_transition",
+      "message": "[2025-06-19T10:00:05.126][12345][67890][trace][gc,sizing] Region 1002: Eden -> Free, idle time: 2400.0ms",
+      "inactive_regions": null,
+      "total_regions": null,
+      "region_id": 1002,
+      "from_state": "Eden",
+      "to_state": "Free",
+      "idle_time_ms": 2400.0,
+      "shrink_bytes": null
+    },
+    {
+      "timestamp": "2025-06-19T10:00:05.127",
+      "pid": 12345,
+      "tid": 67890,
+      "level": "trace",
+      "sizing_type": "region_transition",
+      "message": "[2025-06-19T10:00:05.127][12345][67890][trace][gc,sizing] Region 1500: Old -> Free, idle time: 5000.0ms",
+      "inactive_regions": null,
+      "total_regions": null,
+      "region_id": 1500,
+      "from_state": "Old",
+      "to_state": "Free",
+      "idle_time_ms": 5000.0,
+      "shrink_bytes": null
+    },
+    {
+      "timestamp": "2025-06-19T10:00:05.128",
+      "pid": 12345,
+      "tid": 67890,
+      "level": "info",
+      "sizing_type": "shrink_operation",
+      "message": "[2025-06-19T10:00:05.128][12345][67890][info][gc,sizing] Shrinking heap by 1476395008 bytes",
+      "inactive_regions": null,
+      "total_regions": null,
+      "region_id": null,
+      "from_state": null,
+      "to_state": null,
+      "idle_time_ms": null,
+      "shrink_bytes": 1476395008
+    },
+    {
+      "timestamp": "2025-06-19T10:00:15.300",
+      "pid": 12345,
+      "tid": 67890,
+      "level": "info",
+      "sizing_type": "heap_evaluation_start",
+      "message": "[2025-06-19T10:00:15.300][12345][67890][info][gc,sizing] Time-based heap evaluation started",
+      "inactive_regions": null,
+      "total_regions": null,
+      "region_id": null,
+      "from_state": null,
+      "to_state": null,
+      "idle_time_ms": null,
+      "shrink_bytes": null
+    },
+    {
+      "timestamp": "2025-06-19T10:00:15.301",
+      "pid": 12345,
+      "tid": 67890,
+      "level": "debug",
+      "sizing_type": "heap_evaluation_scan",
+      "message": "[2025-06-19T10:00:15.301][12345][67890][debug][gc,sizing] Scan found 30 inactive regions out of 2048 total regions",
+      "inactive_regions": 30,
+      "total_regions": 2048,
+      "region_id": null,
+      "from_state": null,
+      "to_state": null,
+      "idle_time_ms": null,
+      "shrink_bytes": null
+    }
+  ]
+}
