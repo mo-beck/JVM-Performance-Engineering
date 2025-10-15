@@ -37,9 +37,7 @@ Version: 2.0
 import base64
 import io
 import re
-import os
 import pandas as pd
-import subprocess
 import numpy as np
 import dash
 from dash import dcc, html
@@ -131,7 +129,7 @@ app.layout = html.Div([
             id='upload-data',
             children=html.Div([
                 'Drag and Drop or ',
-                html.A('Select GC Log File')
+                html.A('Select GC Log File(s)')
             ]),
             style={
                 'width': '100%',
@@ -143,7 +141,7 @@ app.layout = html.Div([
                 'textAlign': 'center',
                 'margin': '10px'
             },
-            multiple=False
+            multiple=True
         ),
     ]),
     
@@ -181,30 +179,74 @@ app.layout = html.Div([
      Input('upload-data', 'filename')]
 )
 def update_output(selected_value, contents, filename):
-    if contents is None or filename is None:
+    if contents is None:
         return dash.no_update, "No file selected", dash.no_update
 
     try:
-        # Decode the file content based on its format
-        if ',' in contents:
-            _, content_string = contents.split(',')
-            log_content = base64.b64decode(content_string).decode('utf-8')
+        # Normalise Dash upload payload into a list of (decoded_text, filename)
+        if isinstance(contents, (list, tuple)):
+            content_items = list(contents)
         else:
-            log_content = contents
+            content_items = [contents]
+
+        if isinstance(filename, (list, tuple)):
+            filenames = list(filename)
+        elif filename is None:
+            filenames = []
+        else:
+            filenames = [filename]
+
+        decoded_entries = []
+        for idx, raw_content in enumerate(content_items):
+            if raw_content is None:
+                continue
+
+            name = filenames[idx] if idx < len(filenames) else None
+
+            if isinstance(raw_content, bytes):
+                decoded_text = raw_content.decode('utf-8', errors='replace')
+            else:
+                content_str = raw_content
+                if isinstance(content_str, str) and ',' in content_str:
+                    content_str = content_str.split(',', 1)[1]
+                try:
+                    decoded_bytes = base64.b64decode(content_str)
+                    decoded_text = decoded_bytes.decode('utf-8', errors='replace')
+                except Exception:
+                    decoded_text = str(content_str)
+
+            decoded_entries.append((decoded_text, name))
+
+        if not decoded_entries:
+            return dash.no_update, "Uploaded file(s) could not be read", dash.no_update
+
+        # Prioritise primary GC log ahead of dedicated sizing logs for parsing order
+        decoded_entries.sort(key=lambda item: 1 if item[1] and 'gc-sizing' in item[1].lower() else 0)
+
+        combined_log_content = "\n".join(entry for entry, _ in decoded_entries if entry)
+
+        filenames_for_display = [name for _, name in decoded_entries if name]
+        if filenames_for_display:
+            filename_display = f"Selected file(s): {', '.join(filenames_for_display)}"
+        else:
+            filename_display = "Selected file(s): <unnamed upload>"
+
+        if len(decoded_entries) > 1:
+            filename_display += f" | Combined {len(decoded_entries)} files"
 
         # Parse the GC log content using enhanced parser if available
         if ENHANCED_PARSER_AVAILABLE:
             enhanced_parser = G1EnhancedParser()
-            enhanced_parser.parse_log_content(log_content)
-            
+            enhanced_parser.parse_log_content(combined_log_content)
+
             data_df, scaling_data_df, is_g1, jdk_version = parse_gc_log_enhanced(
-                log_content, enhanced_parser
+                combined_log_content, enhanced_parser
             )
             
             # Check if we have sizing data AND uncommit-only mode
             has_sizing_data = enhanced_parser.has_sizing_data and enhanced_parser.has_uncommit_only_sizing()
         else:
-            data_df, scaling_data_df, is_g1, jdk_version = parse_gc_log(log_content)
+            data_df, scaling_data_df, is_g1, jdk_version = parse_gc_log(combined_log_content)
             has_sizing_data = False
             enhanced_parser = None
 
@@ -237,15 +279,13 @@ def update_output(selected_value, contents, filename):
             if ENHANCED_PARSER_AVAILABLE:
                 region_data = enhanced_parser.get_region_data()
             else:
-                region_data = parse_g1_log(log_content)
+                region_data = parse_g1_log(combined_log_content)
             fig = plot_regions(region_data)
         elif has_sizing_data and selected_value in ['sizing-summary', 'heap-evaluation', 'region-transitions']:
             fig = generate_sizing_plot(enhanced_parser, selected_value)
         else:
             fig = generate_plot(data_df, scaling_data_df, selected_value)
 
-        # Display the name of the selected file
-        filename_display = f"Selected file: {filename}"
         if jdk_version:
             filename_display += f" | JDK Version: {jdk_version}"
         if has_sizing_data:
@@ -290,6 +330,7 @@ def parse_modern_gc_log(log_content, enhanced_parser):
     scaling_data = []
     gc_data = []
     jdk_version = None
+    prev_total_heap = 0  # Track previous total heap for "before" values
     
     # Process each line
     lines = log_content.splitlines()
@@ -333,14 +374,17 @@ def parse_modern_gc_log(log_content, enhanced_parser):
             else:
                 pause_name = pause_type
             
+            current_total_heap = int(total_heap)
             gc_data.append({
                 "Runtime": timestamp,
                 "HeapBefore": int(heap_before),
                 "HeapAfter": int(heap_after),
-                "TotalHeap": int(total_heap),
+                "TotalHeap": current_total_heap,  # Total heap AFTER this GC
+                "TotalHeapBefore": prev_total_heap,  # Total heap BEFORE this GC
                 "PauseName": pause_name,
                 "Duration": float(duration)
             })
+            prev_total_heap = current_total_heap  # Update for next iteration
         
         # Look for JDK version
         version_match = jdk_version_pattern.search(line)
@@ -355,6 +399,7 @@ def parse_modern_gc_log(log_content, enhanced_parser):
             "HeapBefore": 0,
             "HeapAfter": 0,
             "TotalHeap": 0,
+            "TotalHeapBefore": 0,
             "PauseName": "No GC Data",
             "Duration": 0.0
         }]
@@ -533,7 +578,7 @@ def create_heap_evaluation_timeline(sizing_entries):
     eval_entries = [e for e in sizing_entries 
                    if e.sizing_type in ['time_based_evaluation_shrink', 'time_based_evaluation_no_uncommit']]
     uncommit_entries = [e for e in sizing_entries if e.sizing_type == 'time_based_uncommit']
-    shrink_entries = [e for e in sizing_entries if e.sizing_type == 'heap_shrink_completed']
+    shrink_entries = [e for e in sizing_entries if e.sizing_type in ['heap_shrink_completed', 'heap_shrink_details']]
     
     if not eval_entries and not uncommit_entries and not shrink_entries:
         return go.Figure().update_layout(title="No heap evaluation data available")
@@ -565,7 +610,12 @@ def create_heap_evaluation_timeline(sizing_entries):
     shrink_events = [e for e in eval_entries if e.sizing_type == 'time_based_evaluation_shrink']
     if shrink_events:
         timestamps = [parse_timestamp_properly(e.timestamp) for e in shrink_events]
-        shrink_amounts = [getattr(e, 'shrink_mb', 0) for e in shrink_events]
+        shrink_amounts = []
+        for e in shrink_events:
+            value = getattr(e, 'shrink_mb', None)
+            if value is None:
+                value = 0
+            shrink_amounts.append(value)
         all_eval_timestamps.extend(timestamps)
         
         fig.add_trace(
@@ -593,7 +643,12 @@ def create_heap_evaluation_timeline(sizing_entries):
     # Plot 2: Evaluation Outcomes & Actions
     if uncommit_entries:
         timestamps = [parse_timestamp_properly(e.timestamp) for e in uncommit_entries]
-        memory_reclaimed = [e.uncommit_mb for e in uncommit_entries]
+        memory_reclaimed = []
+        for e in uncommit_entries:
+            value = getattr(e, 'uncommit_mb', None)
+            if value is None:
+                value = 0
+            memory_reclaimed.append(value)
         
         # Memory reclaimed as bars
         fig.add_trace(
@@ -618,7 +673,12 @@ def create_heap_evaluation_timeline(sizing_entries):
     # Plot 3: Heap Size After Shrink Operations
     if shrink_entries:
         shrink_timestamps = [parse_timestamp_properly(e.timestamp) for e in shrink_entries]
-        heap_sizes = [e.heap_size_mb for e in shrink_entries]  # Final heap size after shrink
+        heap_sizes = []
+        for e in shrink_entries:
+            value = getattr(e, 'heap_size_mb', None)
+            if value is None:
+                value = 0
+            heap_sizes.append(value)
         
         # Show the progression of heap sizes after each shrink operation
         fig.add_trace(
@@ -696,7 +756,12 @@ def create_heap_evaluation_timeline(sizing_entries):
     # Improve headroom for the first subplot (Heap Sizing Evaluation Decisions)
     # Set y-axis range to provide proper space for markers and text labels
     if shrink_events:
-        shrink_amounts = [getattr(e, 'shrink_mb', 0) for e in shrink_events]
+        shrink_amounts = []
+        for e in shrink_events:
+            value = getattr(e, 'shrink_mb', None)
+            if value is None:
+                value = 0
+            shrink_amounts.append(value)
         max_shrink = max(shrink_amounts) if shrink_amounts else 100
         # Add 50% headroom above the highest shrink value for text labels
         y_max = max_shrink * 1.2
@@ -775,10 +840,10 @@ def create_region_transitions_plot(sizing_entries):
     # Calculate regions that remained inactive (didn't get uncommitted)
     remained_inactive = [inactive - uncommitted for inactive, uncommitted in zip(inactive_regions, uncommitted_regions)]
     
-    # Stacked area chart showing G1's conservative uncommit strategy
+    # Stacked area chart showing G1's uncommit strategy
     fig.add_trace(
         go.Scatter(x=timestamps, y=uncommitted_regions,
-                  mode='lines', name='Regions Uncommitted (≤25% by design)',
+                  mode='lines', name='Regions Uncommitted',
                   fill='tozeroy', fillcolor='rgba(255,0,0,0.6)',
                   line=dict(color='red', width=0)),
         row=1, col=1
@@ -792,47 +857,39 @@ def create_region_transitions_plot(sizing_entries):
         row=1, col=1
     )
     
-    # Plot 2: G1 Uncommit Rate Analysis (Target: 20-25% by design)
+    # Add markers with text labels for uncommitted region counts
+    fig.add_trace(
+        go.Scatter(x=timestamps, y=uncommitted_regions,
+                  mode='markers+text', name='Uncommit Count',
+                  marker=dict(color='darkred', size=8, symbol='circle'),
+                  text=[str(int(val)) for val in uncommitted_regions],
+                  textposition='middle center',
+                  textfont=dict(size=10, color='white'),
+                  showlegend=False),
+        row=1, col=1
+    )
+    
+    # Plot 2: G1 Uncommit Rate Analysis with detailed hover info
     uncommit_rate = [
         (uncommitted / inactive * 100) if inactive > 0 else 0 
         for uncommitted, inactive in zip(uncommitted_regions, inactive_regions)
     ]
     
-    # Color-code based on design constraints
-    colors_for_rate = []
-    for rate in uncommit_rate:
-        if 20 <= rate <= 25:
-            colors_for_rate.append('green')  # Optimal range
-        elif 15 <= rate < 20 or 25 < rate <= 30:
-            colors_for_rate.append('orange')  # Near optimal
-        else:
-            colors_for_rate.append('red')  # Outside expected range
+    # Create hover text with detailed info
+    hover_texts = [
+        f"Rate: {rate:.1f}%<br>Inactive Found: {inactive}<br>Uncommitted: {uncommitted}"
+        for rate, inactive, uncommitted in zip(uncommit_rate, inactive_regions, uncommitted_regions)
+    ]
     
-    # Uncommit rate line with color-coded markers
+    # Uncommit rate line
     fig.add_trace(
         go.Scatter(x=timestamps, y=uncommit_rate,
                   mode='lines+markers', name='G1 Uncommit Rate (%)',
-                  marker=dict(color=colors_for_rate, size=10),
-                  line=dict(color='purple', width=3)),
+                  marker=dict(color='purple', size=10),
+                  line=dict(color='purple', width=3),
+                  hovertext=hover_texts,
+                  hoverinfo='text'),
         row=2, col=1
-    )
-    
-    # Add target range shading
-    fig.add_hrect(y0=20, y1=25, fillcolor="rgba(0,255,0,0.1)", 
-                 line_width=0, row=2, col=1)
-    
-    # Add constraint annotations
-    fig.add_annotation(
-        x=timestamps[len(timestamps)//2] if timestamps else 0,
-        y=27,
-        text="Target: 20-25%<br>(25% of inactive limit)",
-        showarrow=False,
-        font=dict(size=10, color='darkgreen'),
-        bgcolor="rgba(255,255,255,0.8)",
-        bordercolor="green",
-        borderwidth=1,
-        xref=f"x{2}",
-        yref=f"y{2}"
     )
     
     # Add memory reclaimed as bars on the same subplot (secondary y-axis)
@@ -898,19 +955,6 @@ def create_region_transitions_plot(sizing_entries):
         fig.update_xaxes(range=x_range, row=2, col=1)
         fig.update_xaxes(range=x_range, title_text="Time", row=3, col=1)
     
-    # Add G1 Uncommit Constraints note at bottom
-    fig.add_annotation(
-        text="<b>G1 Uncommit Constraints for Time-Based Uncommit:</b><br>• Max 25% of inactive regions<br>• Max 10% of total committed regions<br>• Never below InitialHeapSize<br>• Hysteresis prevents thrashing",
-        xref="paper", yref="paper",
-        x=0.5, y=-0.15, xanchor='center', yanchor='top',
-        showarrow=False,
-        font=dict(size=12, color="darkblue", family="Arial"),
-        bgcolor="rgba(240,248,255,0.9)",
-        bordercolor="lightblue",
-        borderwidth=1,
-        align="left"
-    )
-    
     # Set clean main title
     fig.update_layout(title_text="G1 Region Transitions Analysis")
     
@@ -933,6 +977,7 @@ def parse_gc_log(log_content):
     scaling_data = []
     gc_data = []
     jdk_version = None
+    prev_total_heap = 0  # Track previous total heap for "before" values
     
     # Process each line of the log content
     lines = log_content.splitlines()
@@ -970,15 +1015,18 @@ def parse_gc_log(log_content):
                 pause_name = f"{pause_type} {description}"
             else: 
                 pause_name = pause_type
-                                   
+            
+            current_total_heap = int(total_heap)
             gc_data.append({
                 "Runtime": float(runtime),
                 "HeapBefore": int(heap_before),
                 "HeapAfter": int(heap_after),
-                "TotalHeap": int(total_heap),
+                "TotalHeap": current_total_heap,  # Total heap AFTER this GC
+                "TotalHeapBefore": prev_total_heap,  # Total heap BEFORE this GC
                 "PauseName": pause_name,
                 "Duration": float(duration)
             })
+            prev_total_heap = current_total_heap  # Update for next iteration
         
         # Look for JDK version
         version_match = jdk_version_pattern.search(line)
@@ -1033,9 +1081,13 @@ def generate_plot(data_df, scaling_data_df, selected_value):
     elif selected_value == 'before':
         y_value = 'HeapBefore'
         title = 'Heap Occupancy Before GC'
+        # For "before" view, show TotalHeapBefore (capacity before GC)
+        total_heap_column = 'TotalHeapBefore'
     elif selected_value == 'after':
         y_value = 'HeapAfter'
         title = 'Heap Occupancy After GC'
+        # For "after" view, show TotalHeap (capacity after GC)
+        total_heap_column = 'TotalHeap'
 
     # Handle the 'duration' plot option
     elif selected_value == 'duration':
@@ -1111,10 +1163,14 @@ def generate_plot(data_df, scaling_data_df, selected_value):
         )
         return fig
 
-    # Plotting the TotalHeap line
+    # Plotting the TotalHeap line (use appropriate column based on before/after)
+    # Default to TotalHeap if total_heap_column wasn't set
+    if 'total_heap_column' not in locals():
+        total_heap_column = 'TotalHeap'
+    
     fig.add_trace(go.Scatter(
         x=data_df['Runtime'], 
-        y=data_df['TotalHeap'], 
+        y=data_df[total_heap_column], 
         mode='lines+markers', 
         name='Total Heap', 
         line=dict(color=colors['TotalHeap'])
@@ -1148,4 +1204,4 @@ if __name__ == '__main__':
         print("Enhanced G1 sizing support: ENABLED")
     else:
         print("Enhanced G1 sizing support: DISABLED (parse_g1_regions not found)")
-    app.run_server(debug=True, port=DEFAULT_PORT)
+    app.run(debug=True, port=DEFAULT_PORT)
