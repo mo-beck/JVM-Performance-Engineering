@@ -24,6 +24,22 @@ This directory contains various Python scripts for parsing and visualizing Java 
 ### Enhanced G1 Tools Package
 For comprehensive G1 GC analysis with time-based heap sizing, refer to [README_G1_TOOLS.md](./README_G1_TOOLS.md) for a complete overview of the enhanced G1 analysis capabilities.
 
+### Recommended GC Logging Configuration
+
+For optimal analysis with the enhanced G1 tools, use the following logging pattern:
+
+```bash
+-Xlog:gc*,gc+sizing*:file=gc-sizing.log:time,pid,tid,level,tags:filecount=10,filesize=50M
+```
+
+This configuration provides:
+- **gc***: Complete GC event logging (pauses, phases, heap transitions)
+- **gc+sizing***: Time-based heap sizing events (uncommit evaluations, shrink operations)
+- **time,pid,tid,level,tags**: Modern log format with full metadata for accurate parsing
+- **Rotation**: 10 files × 50MB = 500MB max log retention
+
+**Note:** The modern format `[timestamp][pid][tid][level][tags]` is required for enhanced features. Traditional `[time]s` format is also supported but with limited sizing analysis capabilities.
+
 ### How to Use
 Each script has its own specific usage instructions and dependencies outlined in their respective README files. Please consult each README to understand how to use the scripts effectively.
 

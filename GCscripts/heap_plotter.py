@@ -320,9 +320,10 @@ def parse_gc_log_enhanced(log_content, enhanced_parser):
 
 def parse_modern_gc_log(log_content, enhanced_parser):
     """Parse modern GC log format with PID/TID timestamps"""
-    # Modern format patterns
-    pause_pattern = r"\[([0-9T:\-\.+]+)\]\[(\d+)\]\[(\d+)\]\[(\w+)\]\[gc\s*\] GC\((\d+)\) Pause (\w+)(?: \((.*?)\))?(?: \((.*?)\))? (\d+)M->(\d+)M\((\d+)M\) ([\d\.]+)ms"
-    scaling_pattern = r"\[([0-9T:\-\.+]+)\]\[(\d+)\]\[(\d+)\]\[(\w+)\]\[gc,cpu\s*\] GC\((\d+)\) User=([\d\.]+)s Sys=([\d\.]+)s Real=([\d\.]+)s"
+    # Modern format patterns - updated to handle padded tags and multiple parentheses
+    # Pattern captures: timestamp, pid, tid, level, gc_id, pause_type, then everything before heap stats
+    pause_pattern = r"\[([0-9T:\-\.+]+)\]\[(\d+)\]\[(\d+)\]\[(\w+)\]\[gc[^\]]*\] GC\((\d+)\) Pause ([^\(]+)(.*?) (\d+)M->(\d+)M\((\d+)M\) ([\d\.]+)ms"
+    scaling_pattern = r"\[([0-9T:\-\.+]+)\]\[(\d+)\]\[(\d+)\]\[(\w+)\]\[gc,cpu[^\]]*\] GC\((\d+)\) User=([\d\.]+)s Sys=([\d\.]+)s Real=([\d\.]+)s"
     jdk_version_pattern = re.compile(r"\[([0-9T:\-\.+]+)\]\[(\d+)\]\[(\d+)\]\[(\w+)\]\[gc,init\] Version: ([^\s]+)")
     
     # Initialize variables
@@ -357,15 +358,28 @@ def parse_modern_gc_log(log_content, enhanced_parser):
         # Match and process GC pause information
         pause_match = re.search(pause_pattern, line)
         if pause_match:
-            timestamp_str, pid, tid, level, gc_id, pause_type, description, pause_cause, heap_before, heap_after, total_heap, duration = pause_match.groups()
+            timestamp_str, pid, tid, level, gc_id, pause_type, middle_part, heap_before, heap_after, total_heap, duration = pause_match.groups()
             timestamp = enhanced_parser._parse_timestamp(timestamp_str)
             
+            # Parse the middle part for description and cause
+            # Example: "(Normal) (G1 Evacuation Pause)" or "(Concurrent Start) (G1 Evacuation Pause)"
+            pause_type = pause_type.strip()
+            description = None
+            pause_cause = None
+            
+            # Extract description and cause from middle_part
+            if middle_part:
+                parens = re.findall(r'\(([^)]+)\)', middle_part)
+                if len(parens) >= 1:
+                    description = parens[0]
+                if len(parens) >= 2:
+                    pause_cause = parens[1]
+            
             # Build pause name
-            if description:
-                if "Mixed" in description or "Concurrent Start" in description:
-                    pause_type = description
-                if "System.gc()" in description:
-                    pause_cause = "SystemGC"
+            if description and ("Mixed" in description or "Concurrent Start" in description):
+                pause_type = description
+            if description and "System.gc()" in description:
+                pause_cause = "SystemGC"
             
             if pause_cause:
                 pause_name = f"{pause_type} {pause_cause}"
@@ -449,7 +463,8 @@ def create_sizing_parameters_summary(sizing_entries):
     """Create summary of sizing configuration and statistics"""
     init_entries = [e for e in sizing_entries if e.sizing_type == 'heap_sizing_init']
     param_entries = [e for e in sizing_entries if e.sizing_type == 'sizing_parameters']
-    uncommit_entries = [e for e in sizing_entries if e.sizing_type == 'time_based_uncommit']
+    # Show ONLY time-based uncommit events (not GC-triggered shrinks)
+    uncommit_entries = [e for e in sizing_entries if e.sizing_type == 'time_based_uncommit' and e.uncommit_mb and e.uncommit_mb > 0]
     no_uncommit_entries = [e for e in sizing_entries if e.sizing_type == 'time_based_evaluation_no_uncommit']
     shrink_entries = [e for e in sizing_entries if e.sizing_type == 'heap_shrink_completed']
     
@@ -474,26 +489,29 @@ def create_sizing_parameters_summary(sizing_entries):
                 try:
                     dt = datetime.fromisoformat(e.timestamp.replace('Z', '+00:00').replace('+0000', '+00:00'))
                     common_timestamps.append(dt)
-                    memory_reclaimed.append(e.uncommit_mb)
-                    regions_uncommitted.append(e.uncommit_regions)
+                    memory_reclaimed.append(e.uncommit_mb if e.uncommit_mb else 0)
+                    regions_uncommitted.append(e.uncommit_regions if e.uncommit_regions else 0)
                 except:
                     # Fallback to simple float conversion
                     timestamp_float = float(e.timestamp) if str(e.timestamp).replace('.', '').isdigit() else 0
                     common_timestamps.append(timestamp_float)
-                    memory_reclaimed.append(e.uncommit_mb)
-                    regions_uncommitted.append(e.uncommit_regions)
+                    memory_reclaimed.append(e.uncommit_mb if e.uncommit_mb else 0)
+                    regions_uncommitted.append(e.uncommit_regions if e.uncommit_regions else 0)
             else:
                 timestamp_float = float(e.timestamp) if str(e.timestamp).replace('.', '').isdigit() else 0
                 common_timestamps.append(timestamp_float)
-                memory_reclaimed.append(e.uncommit_mb)
-                regions_uncommitted.append(e.uncommit_regions)
+                memory_reclaimed.append(e.uncommit_mb if e.uncommit_mb else 0)
+                regions_uncommitted.append(e.uncommit_regions if e.uncommit_regions else 0)
+    
+    print(f"DEBUG: Sizing summary - entries={len(uncommit_entries)}, timestamps={len(common_timestamps)}, memory range: {min(memory_reclaimed) if memory_reclaimed else 0}-{max(memory_reclaimed) if memory_reclaimed else 0}")
     
     # Memory uncommit timeline using shared timestamps
     if common_timestamps:
         fig.add_trace(
             go.Bar(x=common_timestamps, y=memory_reclaimed,
                    name='Memory Reclaimed (MB)',
-                   marker=dict(color='green')),
+                   marker=dict(color='green'),
+                   width=60000),  # Bar width in milliseconds for better visibility
             row=1, col=1
         )
     
@@ -545,6 +563,11 @@ def create_sizing_parameters_summary(sizing_entries):
     fig.update_yaxes(title_text="Frequency", row=1, col=2)
     fig.update_yaxes(title_text="Region Count", row=2, col=1)
     
+    # Set y-axis range for memory plot to ensure visibility
+    if memory_reclaimed:
+        max_memory = max(memory_reclaimed)
+        fig.update_yaxes(range=[0, max_memory * 1.1], row=1, col=1)  # 10% padding
+    
     fig.update_xaxes(title_text="Time", row=1, col=1)
     fig.update_xaxes(title_text="Memory Reclaimed (MB)", row=1, col=2)
     fig.update_xaxes(title_text="Time", row=2, col=1)
@@ -577,8 +600,13 @@ def create_heap_evaluation_timeline(sizing_entries):
     """Create timeline focused on the heap sizing evaluation process and decision-making"""
     eval_entries = [e for e in sizing_entries 
                    if e.sizing_type in ['time_based_evaluation_shrink', 'time_based_evaluation_no_uncommit']]
-    uncommit_entries = [e for e in sizing_entries if e.sizing_type == 'time_based_uncommit']
-    shrink_entries = [e for e in sizing_entries if e.sizing_type in ['heap_shrink_completed', 'heap_shrink_details']]
+    # Include both time_based_uncommit and heap_shrink_completed
+    uncommit_entries = [e for e in sizing_entries if e.sizing_type in ['time_based_uncommit', 'heap_shrink_completed'] and e.uncommit_mb and e.uncommit_mb > 0]
+    shrink_entries = [e for e in sizing_entries if e.sizing_type in ['heap_shrink_completed', 'heap_shrink_details'] and e.uncommit_mb and e.uncommit_mb > 0]
+    
+    # If no eval entries, use uncommit entries for the evaluation plot
+    if not eval_entries and uncommit_entries:
+        eval_entries = uncommit_entries
     
     if not eval_entries and not uncommit_entries and not shrink_entries:
         return go.Figure().update_layout(title="No heap evaluation data available")
@@ -606,15 +634,14 @@ def create_heap_evaluation_timeline(sizing_entries):
     # Plot 1: Evaluation Decisions Timeline
     all_eval_timestamps = []
     
-    # Plot shrink evaluations
-    shrink_events = [e for e in eval_entries if e.sizing_type == 'time_based_evaluation_shrink']
-    if shrink_events:
-        timestamps = [parse_timestamp_properly(e.timestamp) for e in shrink_events]
+    # Show evaluation shrink decisions (red triangles) - only time-based evaluation events
+    shrink_eval_events = [e for e in eval_entries if e.sizing_type == 'time_based_evaluation_shrink']
+    if shrink_eval_events:
+        timestamps = [parse_timestamp_properly(e.timestamp) for e in shrink_eval_events]
         shrink_amounts = []
-        for e in shrink_events:
-            value = getattr(e, 'shrink_mb', None)
-            if value is None:
-                value = 0
+        for e in shrink_eval_events:
+            # Get shrink_mb value from evaluation
+            value = e.shrink_mb if e.shrink_mb else 0
             shrink_amounts.append(value)
         all_eval_timestamps.extend(timestamps)
         
@@ -622,12 +649,13 @@ def create_heap_evaluation_timeline(sizing_entries):
             go.Scatter(x=timestamps, y=shrink_amounts,
                       mode='markers+text', name='Shrink Evaluations',
                       marker=dict(color='red', size=15, symbol='triangle-down'),
-                      text=[f'{mb}MB' for mb in shrink_amounts],
-                      textposition='top center'),
+                      text=[f'{int(mb)}MB' if mb > 0 else '' for mb in shrink_amounts],
+                      textposition='top center',
+                      textfont=dict(size=10)),
             row=1, col=1
         )
     
-    # Plot no-uncommit evaluations
+    # Plot no-uncommit evaluations (green circles)
     no_uncommit_events = [e for e in eval_entries if e.sizing_type == 'time_based_evaluation_no_uncommit']
     if no_uncommit_events:
         timestamps = [parse_timestamp_properly(e.timestamp) for e in no_uncommit_events]
@@ -640,14 +668,13 @@ def create_heap_evaluation_timeline(sizing_entries):
             row=1, col=1
         )
     
-    # Plot 2: Evaluation Outcomes & Actions
-    if uncommit_entries:
-        timestamps = [parse_timestamp_properly(e.timestamp) for e in uncommit_entries]
+    # Plot 2: Evaluation Outcomes & Actions - show only TIME-BASED uncommit events, not GC-triggered shrinks
+    time_based_only = [e for e in uncommit_entries if e.sizing_type == 'time_based_uncommit']
+    if time_based_only:
+        timestamps = [parse_timestamp_properly(e.timestamp) for e in time_based_only]
         memory_reclaimed = []
-        for e in uncommit_entries:
-            value = getattr(e, 'uncommit_mb', None)
-            if value is None:
-                value = 0
+        for e in time_based_only:
+            value = e.uncommit_mb if e.uncommit_mb else 0
             memory_reclaimed.append(value)
         
         # Memory reclaimed as bars
@@ -662,8 +689,8 @@ def create_heap_evaluation_timeline(sizing_entries):
         for i, (timestamp, memory) in enumerate(zip(timestamps, memory_reclaimed)):
             fig.add_annotation(
                 x=timestamp,
-                y=memory + (max(memory_reclaimed) * 0.05),
-                text=f"{memory}MB",
+                y=memory + (max(memory_reclaimed) * 0.05) if memory_reclaimed else memory,
+                text=f"{int(memory)}MB",
                 showarrow=False,
                 font=dict(size=12, color='darkgreen', family='Arial'),
                 xref=f"x{2}",
@@ -755,12 +782,10 @@ def create_heap_evaluation_timeline(sizing_entries):
     
     # Improve headroom for the first subplot (Heap Sizing Evaluation Decisions)
     # Set y-axis range to provide proper space for markers and text labels
-    if shrink_events:
+    if shrink_eval_events:
         shrink_amounts = []
-        for e in shrink_events:
-            value = getattr(e, 'shrink_mb', None)
-            if value is None:
-                value = 0
+        for e in shrink_eval_events:
+            value = e.shrink_mb if e.shrink_mb else 0
             shrink_amounts.append(value)
         max_shrink = max(shrink_amounts) if shrink_amounts else 100
         # Add 50% headroom above the highest shrink value for text labels
@@ -798,7 +823,8 @@ def create_heap_evaluation_timeline(sizing_entries):
 
 def create_region_transitions_plot(sizing_entries):
     """Create focused plot showing actual region state transitions and their efficiency"""
-    uncommit_entries = [e for e in sizing_entries if e.sizing_type == 'time_based_uncommit']
+    # Show ONLY time-based uncommit events (not GC-triggered shrinks)
+    uncommit_entries = [e for e in sizing_entries if e.sizing_type == 'time_based_uncommit' and e.uncommit_mb and e.uncommit_mb > 0]
     eval_entries = [e for e in sizing_entries if e.sizing_type in ['time_based_evaluation_shrink', 'time_based_evaluation_no_uncommit']]
     
     # Data validation
@@ -832,13 +858,13 @@ def create_region_transitions_plot(sizing_entries):
     
     # Common data processing for uncommit entries
     timestamps = [parse_timestamp_properly(e.timestamp) for e in uncommit_entries]
-    inactive_regions = [e.inactive_regions for e in uncommit_entries]
-    uncommitted_regions = [e.uncommit_regions for e in uncommit_entries]
-    memory_values = [e.uncommit_mb for e in uncommit_entries]
+    inactive_regions = [e.inactive_regions if e.inactive_regions else e.uncommit_regions for e in uncommit_entries]
+    uncommitted_regions = [e.uncommit_regions if e.uncommit_regions else 0 for e in uncommit_entries]
+    memory_values = [e.uncommit_mb if e.uncommit_mb else 0 for e in uncommit_entries]
     
     # Plot 1: Region State Transitions (Stacked Area Chart)
     # Calculate regions that remained inactive (didn't get uncommitted)
-    remained_inactive = [inactive - uncommitted for inactive, uncommitted in zip(inactive_regions, uncommitted_regions)]
+    remained_inactive = [max(0, inactive - uncommitted) for inactive, uncommitted in zip(inactive_regions, uncommitted_regions)]
     
     # Stacked area chart showing G1's uncommit strategy
     fig.add_trace(
@@ -1127,6 +1153,9 @@ def generate_plot(data_df, scaling_data_df, selected_value):
         # Sort the summary by 'sum' in descending order
         pause_summary = pause_summary.sort_values(by='sum', ascending=False)
 
+        # Calculate dynamic height based on number of rows (50px per row + 200px for header/margins)
+        table_height = max(400, len(pause_summary) * 50 + 200)
+
         fig = make_subplots(
             rows=1, cols=2, 
             column_widths=[0.5, 0.5],
@@ -1159,7 +1188,8 @@ def generate_plot(data_df, scaling_data_df, selected_value):
 
         fig.update_layout(
             title_text='GC Pause Summary and Contribution',
-            showlegend=False
+            showlegend=False,
+            height=table_height
         )
         return fig
 

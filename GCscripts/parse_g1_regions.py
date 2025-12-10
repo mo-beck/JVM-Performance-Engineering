@@ -91,7 +91,7 @@ class G1EnhancedParser:
         self.modern_timestamp_pattern = r"\[([0-9T:\-\.+]+)\]\[(\d+)\]\[(\d+)\]\[([^\]]+)\]\[gc.*?\]"
         self.modern_region_pattern = r"GC\((\d+)\) (\w+) regions: (\d+)->(\d+)"
         
-        # Sizing patterns
+        # Sizing patterns (legacy formats)
         self.sizing_status_pattern = r"G1 Time-Based Heap Sizing (enabled|disabled)(?: \(([^)]+)\))?"
         self.sizing_init_pattern = r"Heap sizing initialized \(mode: ([^)]+)\)"
         self.sizing_params_pattern = r"Heap sizing parameters: evaluation_interval_ms=(\d+), uncommit_delay_ms=(\d+)"
@@ -101,6 +101,10 @@ class G1EnhancedParser:
         self.no_uncommit_pattern = r"Time-based evaluation: no uncommit needed"
         self.shrink_completed_pattern = r"Heap shrink completed.*heap: (\d+)M"
         self.heap_shrink_details_pattern = r"Heap shrink details: uncommitted (\d+) regions \((\d+)MB\), heap size now (\d+)MB"
+        
+        # 2025 format patterns (for your gc-sizing file)
+        self.sizing_init_2025_pattern = r"G1 Time-Based Heap Sizing enabled.*evaluation_interval=(\d+)ms, uncommit_delay=(\d+)ms, min_regions_to_uncommit=(\d+)"
+        self.shrink_completed_2025_pattern = r"Heap shrink completed: uncommitted (\d+) regions \((\d+)MB\), heap size now (\d+)MB"
 
         # New time-based uncommit format patterns (2025+)
         self.eval_start_pattern = r"Starting (?:uncommit|heap) evaluation"
@@ -124,6 +128,13 @@ class G1EnhancedParser:
         
         # Common patterns
         self.region_size_pattern = r"Heap Region Size: (\d+)M"
+        
+        # 2025 time-based uncommit pattern
+        self.time_based_uncommit_2025_pattern = r"Time-based uncommit: found (\d+) inactive regions, uncommitting (\d+) regions \((\d+)MB\)"
+        
+        # 2025 evaluation patterns
+        self.time_based_eval_shrink_2025_pattern = r"Time-based evaluation: shrinking heap by (\d+)MB"
+        self.time_based_eval_no_uncommit_2025_pattern = r"Time-based evaluation: no heap uncommit needed \(evaluation #(\d+)\)"
     
     def _parse_timestamp(self, timestamp_str: str) -> float:
         """Parse timestamp to seconds since epoch"""
@@ -152,9 +163,32 @@ class G1EnhancedParser:
         for line in lines:
             self._parse_line(line)
         
+        # Normalize timestamps to runtime (seconds from start)
+        if self.has_pid_tid:
+            self._normalize_timestamps()
+        
         # Post-processing
         if self.sizing_entries:
             self.has_sizing_data = True
+    
+    def _normalize_timestamps(self):
+        """Normalize epoch timestamps to runtime in seconds from start"""
+        # Find the earliest timestamp across all region data
+        min_timestamp = float('inf')
+        for region_type, data_points in self.region_data.items():
+            if data_points:
+                timestamps = [runtime for runtime, _, _ in data_points]
+                if timestamps:
+                    min_timestamp = min(min_timestamp, min(timestamps))
+        
+        # Normalize all timestamps
+        if min_timestamp != float('inf'):
+            for region_type in self.region_data:
+                normalized_data = [
+                    (runtime - min_timestamp, before, after)
+                    for runtime, before, after in self.region_data[region_type]
+                ]
+                self.region_data[region_type] = normalized_data
     
     def _parse_line(self, line: str):
         """Parse a single line from the log"""
@@ -204,6 +238,21 @@ class G1EnhancedParser:
         """Parse sizing-related events from line"""
         timestamp = self._extract_timestamp(line)
         if not timestamp:
+            return
+        
+        # 2025 format: G1 Time-Based Heap Sizing enabled with inline parameters
+        # Check this FIRST as it's the most specific pattern for your gc-sizing file
+        init_2025_match = re.search(self.sizing_init_2025_pattern, line)
+        if init_2025_match:
+            eval_ms, delay_ms, min_regions = map(int, init_2025_match.groups())
+            self.sizing_entries.append(SizingEntry(
+                timestamp=timestamp,
+                sizing_type='heap_sizing_init',
+                sizing_mode='uncommit-only',
+                evaluation_interval_ms=eval_ms,
+                uncommit_delay_ms=delay_ms,
+                inactive_required=min_regions
+            ))
             return
         
         # Heap sizing initialization
@@ -288,7 +337,21 @@ class G1EnhancedParser:
             self._current_eval.clear()
             return
         
-        # Heap shrink completed
+        # 2025 format: Heap shrink completed with detailed info
+        # Check this FIRST as it's more specific than the legacy pattern
+        shrink_2025_match = re.search(self.shrink_completed_2025_pattern, line)
+        if shrink_2025_match:
+            regions, mb, heap_size = map(int, shrink_2025_match.groups())
+            self.sizing_entries.append(SizingEntry(
+                timestamp=timestamp,
+                sizing_type='heap_shrink_completed',
+                uncommit_regions=regions,
+                uncommit_mb=float(mb),
+                heap_size_mb=heap_size
+            ))
+            return
+        
+        # Heap shrink completed (legacy)
         shrink_completed_match = re.search(self.shrink_completed_pattern, line)
         if shrink_completed_match:
             heap_size = int(shrink_completed_match.group(1))
@@ -325,6 +388,39 @@ class G1EnhancedParser:
                 heap_size_mb=heap_size
             ))
             self._current_eval.clear()
+            return
+        
+        # 2025 Time-based uncommit pattern
+        time_based_2025_match = re.search(self.time_based_uncommit_2025_pattern, line)
+        if time_based_2025_match:
+            inactive_regions, uncommit_regions, uncommit_mb = map(int, time_based_2025_match.groups())
+            self.sizing_entries.append(SizingEntry(
+                timestamp=timestamp,
+                sizing_type='time_based_uncommit',
+                inactive_regions=inactive_regions,
+                uncommit_regions=uncommit_regions,
+                uncommit_mb=float(uncommit_mb)
+            ))
+            return
+        
+        # 2025 evaluation: shrinking heap
+        eval_shrink_2025_match = re.search(self.time_based_eval_shrink_2025_pattern, line)
+        if eval_shrink_2025_match:
+            shrink_mb = int(eval_shrink_2025_match.group(1))
+            self.sizing_entries.append(SizingEntry(
+                timestamp=timestamp,
+                sizing_type='time_based_evaluation_shrink',
+                shrink_mb=float(shrink_mb)
+            ))
+            return
+        
+        # 2025 evaluation: no uncommit needed
+        eval_no_uncommit_2025_match = re.search(self.time_based_eval_no_uncommit_2025_pattern, line)
+        if eval_no_uncommit_2025_match:
+            self.sizing_entries.append(SizingEntry(
+                timestamp=timestamp,
+                sizing_type='time_based_evaluation_no_uncommit'
+            ))
             return
 
         # ---- New format handling ----
@@ -626,7 +722,7 @@ class G1EnhancedParser:
             ))
     
     def _extract_timestamp(self, line: str) -> Optional[str]:
-        """Extract timestamp from line based on format"""
+        """Extract timestamp string from line (keep as string for datetime parsing)"""
         if self.has_pid_tid:
             match = re.search(self.modern_timestamp_pattern, line)
             return match.group(1) if match else None
